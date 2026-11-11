@@ -1,0 +1,236 @@
+﻿///$tab Description
+/*********************************************************************
+Extractor: 01-03 Extract SAP for UFKBRD ZGRCCP410.qvs
+Version: 1.0
+Author: Doshlova.YuV
+Date created: 2021/09/01
+Date last modified: 2021/09/01
+Description: Приложение извлекает данные из витрины ZGRCCP410 SAP (Форма1 и Форма2 РСБУ и счетов КПС)
+Extractor for application: Дашборд ВОК.qvw 
+----------------------------------------------------------------------
+Version: 1.0
+Author: 
+Date last modified: 2021/09/01
+Changes: 
+ - Initial version
+*********************************************************************/
+///$tab Main
+$(must_include=..\..\QVScripts\QVS\Variables\Дашборд ВОК\regionvars.qvs);
+$(must_include=..\..\QVScripts\QVS\Variables\Дашборд ВОК\folders.qvs);
+$(must_include=..\..\QVScripts\QVS\Variables\Дашборд ВОК\vars.qvs);
+///$tab ServiceTBLs
+SUB ServiceTBLs
+	
+	//всегда два последних года
+	LET vToday = Today();
+
+	Список_Лет:
+	LOAD
+		Year('$(vToday)')-2+RecNo() as Год
+	AutoGenerate Year('$(vToday)')-(Year('$(vToday)')-2);
+
+	Список_Месяцев:
+	LOAD * INLINE [
+	Месяц
+	001
+	002
+	003
+	004
+	005
+	006
+	007
+	008
+	009
+	010
+	011
+	012
+	013
+	014
+	015
+	016
+	];
+
+ENDSUB
+///$tab ZGRCCP410
+SUB Extract_ZGRCCP410	
+
+	$(must_include=Connectors\conn\Дашборд ВОК\sap_GRC.conn);
+	
+		FOR Year = 0 TO NoOfRows('Список_Лет')-1	
+		LET vYear = Peek('Год', $(Year), 'Список_Лет'); 
+			
+			FOR Month = 0 TO NoOfRows('Список_Месяцев')-1	
+			LET vMonth = Peek('Месяц', $(Month), 'Список_Месяцев');
+			
+			//условие если месяц 13,14,15,16
+			if '$(vMonth)'>12 THEN
+				SET vMonth_1 = 12;
+			ELSE
+				LET vMonth_1 = '$(vMonth)';
+			ENDIF 
+			
+			//выгрузка работает на глубину 3 месяца от текущего месяца
+			LET v_3МесяцаНазад	= date(AddMonths('$(vToday)',-3)); 				//дата 3 месяца назад от текущей, глубина выгрзуки
+			LET vДатаЦикла		= MonthEnd(MakeDate($(vYear), $(vMonth_1)));	//текущая дата загрузки
+			
+			if '$(vДатаЦикла)'>= '$(v_3МесяцаНазад)' and '$(vДатаЦикла)'<='$(vToday)' THEN			
+	
+				ZGRCCP410:
+				SELECT
+					[0COMP_CODE], 	//Код БЕ
+					[0CUSTOMER],  	//Код контрагента
+					[ZKHCONTR],		//Код контрагента полный
+					[0DOC_DATE],  	//Период	
+					[0FISCPER], 	//Дата
+					[0GL_ACCOUNT],  //Счет
+					[0CREDIT_LC], 	//Сумма по кредиту
+					[0DEBIT_LC],	//Сумма по дебету
+					[0ASSET_MAIN],  //выгружаем для НЗС
+					[0DEB_CRE_LC],   //выгружаем для НЗС, оборот за период	
+
+					//используется в МТР
+					[0MATERIAL],	//Материал
+					[0QUANTITY],	//Кол-во
+					[ZKHKGLACC]	//Корр.Счет		
+				FROM 
+					ZGRCCP410	
+				WHERE (
+					[0FISCPER] 		= $(vYear)$(vMonth),
+					[0COMP_CODE] 	= 1000,
+					[0COMP_CODE] 	= 1020,
+					[0COMP_CODE] 	= 1010, //ннг
+					[0COMP_CODE] 	= 1030,
+					[0COMP_CODE] 	= 1260, //оренбург
+					[0COMP_CODE] 	= 5063,
+					[0COMP_CODE] 	= 3998, //мегион нет данных
+					[0COMP_CODE] 	= 1240,
+					[0COMP_CODE] 	= 5855, //шельф нет данных
+					[0COMP_CODE] 	= 8450,
+					[0COMP_CODE] 	= 1110, //
+					[0COMP_CODE] 	= 5710, //заполярье
+					[0COMP_CODE] 	= 6790, //гео
+					[0COMP_CODE] 	= 1060, //меретояханефтегаз
+					[0COMP_CODE] 	= 1140, //ангара
+					[0COMP_CODE] 	= 5030, //гыдан энерджи
+					[0COMP_CODE] 	= 1150,
+					[0COMP_CODE] 	= 8490,
+					[0COMP_CODE] 	= 1050,
+					[0COMP_CODE] 	= 6690,
+					[0COMP_CODE] 	= 7500,
+					[0COMP_CODE] 	= 1130,
+					[0COMP_CODE] 	= 4471,
+					[0COMP_CODE] 	= 1120,
+					[0COMP_CODE] 	= 1040,
+					[0COMP_CODE] 	= 3970,
+					[0COMP_CODE] 	= 3910,
+					[0COMP_CODE] 	= 3863,
+					[0COMP_CODE] 	= 6825, //Морнефтегазпроект - новое 23.01.25
+					[0COMP_CODE] 	= 4510, //Автоматизация - новое 23.01.25
+					[0COMP_CODE] 	= 6010, //НТЦ - новое 23.01.25
+					[0COMP_CODE] 	= 4700, //Энерком - новое 23.01.25
+					[0COMP_CODE] 	= 5200, //ИТ Сервис - новое 23.01.25
+					[0COMP_CODE] 	= 8870 //Ярсале - новое 23.01.25				
+				);
+
+				STORE ZGRCCP410 into $(vDataTier1)\SAP\Дашборд ВОК\ZGRCCP410\ZGRCCP410_$(vYear)$(vMonth).qvd;
+				
+				IF not WildMatch(Upper(ComputerName()),'SPB99-BRD-QV0*T*','SPB99-BRD-QV0*D*') THEN
+					STORE ZGRCCP410 INTO  [$(vXLSData_UFK)\_УФК БРД_общие данные\Приложения Qlik\Управление ВОК\ВОК\SAP\ZGRCCP410\ZGRCCP410_$(vYear)$(vMonth).qvd] (qvd);
+				ENDIF;
+				DROP Table ZGRCCP410;
+			
+			ENDIF
+		
+			NEXT Month
+		NEXT Year
+	
+	DISCONNECT;
+
+ENDSUB
+
+///$tab ZKHDCP050
+SUB Extract_ZKHDCP050
+	
+	$(must_include=Connectors\conn\Дашборд ВОК\sap_GRC.conn);
+
+			FOR Year = 0 TO NoOfRows('Список_Лет')-1	
+			LET vYear = Peek('Год', $(Year), 'Список_Лет'); 
+		
+				ZKHDCP050:
+				SELECT	
+					[0CALMONTH2], 
+				     [0CALYEAR], 
+				     [0COMP_CODE], 
+				     [0FISCPER], 
+				     ZKHSALEND,
+				     [0GL_FSITEM],
+				     [0INFOPROV],
+				     [ZKHDSTAT],
+					 [ZKHDVTYPE] //тип значения
+				FROM ZKHDCP050
+				WHERE (
+					[0CALYEAR] = $(vYear),
+					[0COMP_CODE] 	= 1020,
+					[0COMP_CODE] 	= 1010,
+					[0COMP_CODE] 	= 1260,
+					[0COMP_CODE] 	= 5710,
+					[0COMP_CODE] 	= 1240,
+					[0COMP_CODE] 	= 1110,
+					[0COMP_CODE] 	= 6790,
+					[0COMP_CODE] 	= 1030,
+					[0COMP_CODE] 	= 5063,
+					[0COMP_CODE] 	= 1060,					
+					[0COMP_CODE] 	= 8450,					
+					[0COMP_CODE] 	= 3863,
+					[0COMP_CODE] 	= 1000,
+					//1С
+					[0COMP_CODE] 	= 8947,
+					[0COMP_CODE] 	= 5855,
+					[0COMP_CODE] 	= 3998,					
+					[0COMP_CODE] 	= 8943,
+					[0COMP_CODE] 	= 8991,
+					[0COMP_CODE] 	= 4510,
+					[0COMP_CODE] 	= 6825,
+					[0COMP_CODE] 	= 5200,
+					[0COMP_CODE] 	= 6010,
+					[0COMP_CODE] 	= 2510,
+//					[0COMP_CODE] 	= 4030,
+					[0COMP_CODE] 	= 4040,
+					
+					[0COMP_CODE] 	= 1050,
+					[0COMP_CODE] 	= 1140,
+					[0COMP_CODE] 	= 1150,
+					[0COMP_CODE] 	= 4700,
+					[0COMP_CODE] 	= 5030,
+//					[0COMP_CODE] 	= 7815,
+					[0COMP_CODE] 	= 8490,
+					
+					[0COMP_CODE] 	= 6450,
+//					[0COMP_CODE] 	= 8162
+					[0COMP_CODE] 	= 8793,
+					[0COMP_CODE] 	= 8870,
+					[0COMP_CODE] 	= 5085,
+					[0COMP_CODE] 	= 5914
+//					[0COMP_CODE] 	= 2486
+//					[0COMP_CODE] 	= 6601
+//					[0COMP_CODE] 	= 4310,
+//					[0COMP_CODE] 	= 4845
+				);
+				
+				STORE ZKHDCP050 into $(vDataTier1)\SAP\Дашборд ВОК\ZKHDCP050\ZKHDCP050_$(vYear).qvd;
+				IF not WildMatch(Upper(ComputerName()),'SPB99-BRD-QV0*T*','SPB99-BRD-QV0*D*') THEN
+					STORE ZKHDCP050 INTO  [$(vXLSData_UFK)\_УФК БРД_общие данные\Приложения Qlik\Управление ВОК\ВОК\SAP\ZKHDCP050\ZKHDCP050_$(vYear).qvd] (qvd);
+				ENDIF;
+				DROP Table ZKHDCP050;
+		
+		NEXT Year	
+	
+	DISCONNECT;
+	Drop Table Список_Лет;
+
+ENDSUB
+
+///$tab CALLs
+CALL ServiceTBLs
+CALL Extract_ZGRCCP410
+CALL Extract_ZKHDCP050

@@ -1,0 +1,277 @@
+﻿///$tab Main
+$(must_include=..\..\QVScripts\QVS\Variables\Дашборд ВОК\regionvars.qvs);
+$(must_include=..\..\QVScripts\QVS\Variables\Дашборд ВОК\folders.qvs);
+$(must_include=..\..\QVScripts\QVS\Variables\Дашборд ВОК\vars.qvs);
+
+///$tab MapTBLs
+SUB MapTBLs
+	
+	Map_DO:
+	Mapping 
+	LOAD  Distinct
+		[БЕ Код],
+		[ДО Кратко]    
+	FROM 
+		[$(vDataTier1)\Excel\Дашборд ВОК\ДО_ВОК.qvd]
+		(qvd)
+	Where 
+		[Признак ДО.ВОК]=1; //только для вкладки ВОК	
+		
+
+	//************************************************************************* корректировка типа ДО
+	КорректировкаТипДО:
+	Mapping
+	LOAD      
+		[Номер в SAP],
+		[корр типа] as [Скорректированный тип ДО]
+	FROM
+		[$(vDataTier1)\Excel\Дашборд ВОК\ДО_ВОК.qvd]
+		(qvd)
+	Where 
+		not IsNull([корр типа]) and [корр типа]<>'';
+
+	//корректировка типа ДО в зависимости от даты перехода в СП. С этой даты  - Сторонее, до этой даты ВГО
+	СП_:
+	Mapping
+	LOAD 
+		НомерКА, //здесь уже добавлены лидирующие нули
+		date(DayStart(MonthEnd([Дата перехода в СП]))) as Дата
+	FROM
+		[$(vDataTier1)\Excel\Дашборд ВОК\Контрагенты ВГО.qvd]
+		(qvd)
+	Where 
+		not IsNull([Дата перехода в СП]) and [Дата перехода в СП]<>'';
+
+	//присвоение типа ДО с учетом корректировки в Ексель и с учетом даты перехода в СП по Ексель
+	НомерКА_ВГО:
+	Mapping
+	LOAD 
+		Num([Контрагент Код],'0000000000')&'|'&[Период],  
+		1
+	Where 
+		[Контрагент Тип]='ВГО';
+	LOAD
+		[Контрагент Код],
+		Период,
+		if(ДатаПерехода>Период, 'ВГО', if(ДатаПерехода<=Период, 'Сторонний', 
+			ApplyMap('КорректировкаТипДО',[Контрагент Код], [Контрагент Тип]))) as  [Контрагент Тип];
+	LOAD
+		ApplyMap('КорректировкаТипДО',[Контрагент Код], [Контрагент Тип])	as [Контрагент Тип],	
+		ApplyMap('СП_',Num([Контрагент Код],'0000000000'), Null()) 			as ДатаПерехода,
+		[Контрагент Код],
+		[Контрагент Тип] 													as [Контрагент Тип Исходный],
+		[Период]
+	FROM
+		[$(vDataTier2)\MasterData\Контроль МТР\МТР Справочник SAP_ВГО_ВЗЛ.qvd]
+		(qvd);
+
+	ВГО_ВЗЛ_МТР:
+	Mapping 
+	LOAD 
+		Num([Контрагент Код],'0000000000')&'|'&[Период], // Num() т.к. в витрине справочника нет лидирующих нулей, а в 410-й есть
+		[Контрагент Тип]
+	FROM 
+		[$(vDataTier2)\MasterData\Контроль МТР\МТР Справочник SAP_ВГО_ВЗЛ.qvd] (qvd);
+
+ENDSUB
+
+///$tab ZGRCCP410
+SUB ZGRCCP410_Transform
+	
+	// Трансформ НДПИ на основе данных SAP 410 витрины
+	Данные_TMP:
+	LOAD 
+		if(ZKHCONTR='0000008602',//ПАО ГПН
+			'ВГО', 
+			ApplyMap('ВГО_ВЗЛ_МТР',
+				ZKHCONTR
+				&'|'&Date(DayStart(MonthEnd(MakeDate(Mid([0FISCPER],2,4),Right([0FISCPER],2))))),
+				'Сторонний')
+		)																			as [Контрагент Тип],
+		
+		if( [ZKHCONTR]='0000008602',//ПАО ГПН
+				1, 
+				ApplyMap('НомерКА_ВГО',
+					Num([ZKHCONTR],'0000000000')
+					&'|'&Date(DayStart(MonthEnd(MakeDate(Mid([0FISCPER],2,4),Right([0FISCPER],2))))),
+					0))                                 							as [Контрагент ВГО],
+		ApplyMap('Map_DO', [0COMP_CODE], 'Не найдено') 								as [ДО Наименование],
+		[ZKHCONTR], 
+		[0CUSTOMER],
+		[0COMP_CODE],
+		[0DOC_DATE], 
+		[0CREDIT_LC] 																as [Выручка оборот за период], 
+		[0CREDIT_LC],
+		[0GL_ACCOUNT],
+		//месяцы с 13 по 16 считать 12ым месяцем
+		if(Right([0FISCPER],2)>12, 
+			date(DayStart(MonthEnd(MakeDate(Mid([0FISCPER],2,4),12)))),
+			date(DayStart(MonthEnd(MakeDate(Mid([0FISCPER],2,4),Right([0FISCPER],2)))))) as Период,
+		[0FISCPER] 																	as ОтборПериода,
+		[0FISCPER],
+		[0DEBIT_LC]																	as [Оборот за период по дебету],
+		[0DEBIT_LC],
+		[0DEB_CRE_LC],
+		[0MATERIAL],
+		[0QUANTITY],
+		[ZKHKGLACC]		
+	FROM
+		[$(vSrcPath_SAP)\*.qvd] (qvd);
+
+
+	//отбираю только то, что касается выручки. Счет 901*, исключены внутренние движения ([Контаргент ВГО]='0')
+	//убираю пустых клиентов ZKHCONTR
+	NoConcatenate
+	Данные_Выручка:
+	LOAD 
+		 [ДО Наименование],
+	     Round(sum([Выручка оборот за период]),0.01) as [Выручка оборот за период], 
+	     Период,
+	     if(ZKHCONTR=87992 and [ДО Наименование]='Ямал' and Период=date('31.12.2022'), 1, 0) as [Признак КА Ямал]
+	Resident
+		Данные_TMP
+	Where 
+		[0GL_ACCOUNT] like '901*'  	  and 
+		[Контрагент ВГО]='0'		  and 
+		not IsNull([ZKHCONTR])  	  and
+		[ZKHCONTR]<>''				  and
+		Year(Период)>='$(vYear_Dashboard)' 			  and
+		[ДО Наименование]<>'Не найдено'
+	Group By
+		[ДО Наименование],
+		Период,
+		if(ZKHCONTR=87992 and [ДО Наименование]='Ямал' and Период=date('31.12.2022'), 1, 0);
+	
+	STORE Данные_TMP 	 into $(vDataTier2)\FactTables\Дашборд ВОК\SAP\ZGRCCP410\ZGRCCP410_ИсходныеДанные.qvd;
+	DROP TABLE Данные_TMP; 
+	STORE Данные_Выручка into $(vDataTier2)\FactTables\Дашборд ВОК\SAP\ZGRCCP410\ZGRCCP410_Выручка.qvd;
+	DROP Table Данные_Выручка;
+
+ENDSUB
+
+///$tab ZKHDCP050
+SUB ZKHDCP050_Transform
+
+	ZKHDCP050_БыстраяЛиквидность:	
+	LOAD 
+	     ZKHSALEND 																		as [Быстрая ликвидность. Сумма],
+	     ApplyMap('Map_DO', [0COMP_CODE], 'Не найдено') 								as [ДО Наименование],
+	     date(DayStart(MonthEnd(MakeDate(Mid([0FISCPER],2,4),Right([0FISCPER],2))))) 	as Период,
+	     if([0GL_FSITEM]='1236' or [0GL_FSITEM]='1238', '1236_1238',
+	     if([0GL_FSITEM]='1521' or [0GL_FSITEM]='1522', '1521_1522',
+	     if([0GL_FSITEM]='1523' or [0GL_FSITEM]='1524', '1523_1524',
+	     if([0GL_FSITEM]='1510' or [0GL_FSITEM]='1410', '1510_1410',
+	     if([0GL_FSITEM]='1529', '1529', 
+	     if([0GL_FSITEM]='1241' or [0GL_FSITEM]='1250', 'Остатки на начало'	     
+	     )))))) as [Быстрая ликвидность. Сумма. Признак],
+	     [0GL_FSITEM] as [Быстрая ликвидность.Строка]
+	FROM
+		[$(vSrcPath_SAP_ZKHDCP050)\*.qvd]
+		(qvd)
+	Where 
+		[0INFOPROV]='ZKHDDP102' and
+		[ZKHDSTAT] = '03A';
+	
+	NoConcatenate
+	t1:
+	LOAD 
+		'03A' as [Признак данных],
+		sum([Быстрая ликвидность. Сумма]) as [Быстрая ликвидность. Сумма],
+		[ДО Наименование],
+		Период,
+		[Быстрая ликвидность. Сумма. Признак],
+		[Быстрая ликвидность.Строка]		
+	Resident ZKHDCP050_БыстраяЛиквидность
+	Where 
+		Year(date(Период))>='$(vYear_Dashboard)' and 
+		[Быстрая ликвидность. Сумма]<>0  and
+		[ДО Наименование]<>'Не найдено'
+	Group By 	
+		[ДО Наименование],
+		Период,
+		[Быстрая ликвидность. Сумма. Признак],
+		[Быстрая ликвидность.Строка];
+	DROP Table ZKHDCP050_БыстраяЛиквидность;
+	
+	KEYs:
+	LOAD Distinct
+		[ДО Наименование]&'_'&date(Период) as  KEY
+	Resident t1;
+	
+	//дозагрузка отсутствующих данных по другим отборам
+	ZKHDCP050_БыстраяЛиквидность:	
+	LOAD 
+	     1 as  Признак,
+	     ZKHSALEND 																		as [Быстрая ликвидность. Сумма],
+	     ApplyMap('Map_DO', [0COMP_CODE], 'Не найдено') 								as [ДО Наименование],
+	     date(DayStart(MonthEnd(MakeDate(Mid([0FISCPER],2,4),Right([0FISCPER],2))))) 	as Период,
+	     if([0GL_FSITEM]='1236' or [0GL_FSITEM]='1238', '1236_1238',
+	     if([0GL_FSITEM]='1521' or [0GL_FSITEM]='1522', '1521_1522',
+	     if([0GL_FSITEM]='1523' or [0GL_FSITEM]='1524', '1523_1524',
+	     if([0GL_FSITEM]='1510' or [0GL_FSITEM]='1410', '1510_1410',
+	     if([0GL_FSITEM]='1529', '1529', 
+	     if([0GL_FSITEM]='1241' or [0GL_FSITEM]='1250', 'Остатки на начало'	     
+	     )))))) as [Быстрая ликвидность. Сумма. Признак],
+	     [0GL_FSITEM] as [Быстрая ликвидность.Строка]
+	FROM
+		[$(vSrcPath_SAP_ZKHDCP050)\*.qvd]
+		(qvd)
+	Where 
+		[0INFOPROV]='ZKHDDC117' and
+		[ZKHDSTAT] = '01I';
+	
+	
+	Concatenate (t1)
+	LOAD 
+		'01I' as [Признак данных],
+		sum([Быстрая ликвидность. Сумма]) as [Быстрая ликвидность. Сумма],
+		[ДО Наименование],
+		Период,
+		[Быстрая ликвидность. Сумма. Признак],
+		[Быстрая ликвидность.Строка]		
+	Resident ZKHDCP050_БыстраяЛиквидность
+	Where 
+		Year(date(Период))>='$(vYear_Dashboard)' and 
+		[Быстрая ликвидность. Сумма]<>0  and
+		[ДО Наименование]<>'Не найдено' and
+		not Exists(KEY, [ДО Наименование]&'_'&date(Период))
+	Group By 	
+		[ДО Наименование],
+		Период,
+		[Быстрая ликвидность. Сумма. Признак],
+		[Быстрая ликвидность.Строка];
+	DROP Table ZKHDCP050_БыстраяЛиквидность;
+	
+	DROP Table KEYs;
+		
+	STORE t1 into $(vDataTier2)\FactTables\Дашборд ВОК\SAP\ZKHDCP050\ZKHDCP050_БыстраяЛиквидность.qvd;
+	DROP Table t1;
+	
+ENDSUB
+///$tab Transform_ZKHDCP050_Налоги
+SUB Transform_ZKHDCP050_Налоги
+	
+	//трансформация файла 
+	Данные_Итог:
+	LOAD 
+	     Период,
+	     [ДО Наименование],
+	     sum([Быстрая ликвидность. Сумма])  as [Сумма на конец]
+	FROM
+		[$(vDataTier2)\FactTables\Дашборд ВОК\SAP\ZKHDCP050\ZKHDCP050_БыстраяЛиквидность.qvd]
+		(qvd)
+	Where
+		[Быстрая ликвидность.Строка]='1524'
+	Group By
+		Период,
+	    [ДО Наименование];
+	
+	STORE Данные_Итог into $(vDataTier2)\FactTables\Дашборд ВОК\SAP\ZKHDCP050\ZKHDCP050_Налоги.qvd;
+	DROP Table Данные_Итог;
+
+ENDSUB
+///$tab CALLs
+CALL MapTBLs
+CALL ZGRCCP410_Transform
+CALL ZKHDCP050_Transform
+CALL Transform_ZKHDCP050_Налоги
