@@ -1,0 +1,85 @@
+﻿///$tab Description
+/*********************************************************************
+Extractor: 02-08_Transform SAP for UFKBRD Контроль МТР.qvs
+Version: 1.0
+Author: Doshlova.YuV
+Date created: 2021/09/01
+Date last modified: 2021/09/01
+Description: Приложение преобразовывает данные из приложения Контроль МТР
+Extractor for application: Дашборд ВОК.qvw 
+----------------------------------------------------------------------
+Version: 1.0
+Author: 
+Date last modified: 2021/09/01
+Changes: 
+ - Initial version
+*********************************************************************/
+///$tab Main
+$(must_include=..\..\QVScripts\QVS\Variables\Дашборд ВОК\regionvars.qvs);
+$(must_include=..\..\QVScripts\QVS\Variables\Дашборд ВОК\folders.qvs);
+$(must_include=..\..\QVScripts\QVS\Variables\Дашборд ВОК\vars.qvs);
+
+
+///$tab MapTBLs
+SUB MapTBLs
+
+	ДО_ВОК:
+	Mapping
+	LOAD Distinct     
+	     [БЕ Код],
+	     [ДО Кратко]
+	FROM 
+		[$(vDataTier1)\Excel\Дашборд ВОК\ДО_ВОК.qvd]
+		(qvd)
+	Where 
+		[Признак ДО.ВОК]=1; //только для вкладки ВОК
+		
+ENDSUB
+///$tab МТР
+SUB МТР
+
+	//SET vSrezPrognMTR = '202303. БП';
+	//SET vИнвЛимСрезДанных =  'БП/СИП 2023';
+
+
+	МТР_Данные:
+	 LOAD
+		*
+	 Where 
+	 	not isnull([ДО Наименование]);
+	LOAD 
+		'Контроль МТР' 										as [Источник данных],
+		ApplyMap('ДО_ВОК', [Балансовая единица], Null()) 	as [ДО Наименование], 
+		[Признак Данные], 
+		Период, 
+		Материал,
+		[Контрагент Код],
+		[Контрагент Тип],
+		Проект,
+		[Признак НЭЗ], 
+		[Категория запаса Код],
+		Сумма,
+		[Основной счет],
+		[Балансовая единица],	
+		if([Основной счет] like '#/10*' or
+			[Основной счет] like '#/41*' , 'БЕЗ ВНА', 'Остальное') as [МТР признак ВНА],
+		[Фильтр в Карте МТР 1 уровень], //здесь отбор CAPEX|OPEX
+		[НЭЗ по сроку хранения],
+		[Срез данных],
+		[Контрагент ДДС Код],
+		[Контрагент КПС],
+		[Доля в ГПН]
+	FROM
+		[$(vRHD_Interlayer)\from_mtr_to_vok\FROM_MTR_to_VOK.qvd]
+		(qvd)
+	Where
+		Year(Период)>='$(vYear_Dashboard)' or [Срез данных]<>''; //для среза данных нет периодов
+
+	STORE МТР_Данные into $(vDataTier2)\FactTables\Дашборд ВОК\SAP\МТР\МТР_Данные.qvd;	
+	DROP Table МТР_Данные;
+
+ENDSUB
+
+///$tab CALLs
+CALL MapTBLs
+CALL МТР

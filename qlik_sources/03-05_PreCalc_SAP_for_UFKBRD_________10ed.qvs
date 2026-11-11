@@ -1,0 +1,199 @@
+﻿///$tab Main
+$(must_include=..\..\QVScripts\QVS\Variables\Дашборд ВОК\regionvars.qvs);
+$(must_include=..\..\QVScripts\QVS\Variables\Дашборд ВОК\folders.qvs);
+$(must_include=..\..\QVScripts\QVS\Variables\Дашборд ВОК\vars.qvs);
+///$tab MapTBLs
+SUB MapTBLs
+	
+	Mapping
+	[Оценочные резервы мэппинг]:
+	LOAD [As is] as [Наименование счета], 
+	     [To be]
+	FROM
+	[$(vDataTier1)\Excel\Дашборд ВОК\Оценочные резервы Список.qvd]
+	(qvd);
+
+ENDSUB
+///$tab ServiceTBLs
+SUB ServiceTBLs
+	
+	//список ДО на вкладках КПЭ и ВОК
+	//поле [ДО Наименование] должно быть строго ограниено этим списком
+	//Но на резервах количество ДО больше, поэтому есть отдельное поле [ДО резервы]
+	Список_ДО_ВОК:
+	LOAD * INLINE [
+	Поле2
+	Восток
+	ГЕО
+	ННГ
+	Оренбург
+	Развитие
+	Хантос
+	Ямал
+	Меретояха
+	Мессояха
+	Мегион
+	Шельф
+	Заполярье
+	];
+
+ENDSUB
+///$tab SAP410_Группировка
+SUB SAP410_Группировка
+	
+	//выполняем скрипт только при необходимости вручную. так выполняется около 20 минут
+	SET vГруппировкаДанных = 0;
+	
+	IF $(vГруппировкаДанных)=1 THEN
+	
+		ZGRCCP410_ИсходныеДанные:
+		LOAD 
+		     [ДО Наименование], 
+		     [0COMP_CODE], 
+		     [0GL_ACCOUNT], 
+		     [0COMP_CODE]&'_'&[0GL_ACCOUNT] as KEY,
+		     Период, 
+		     sum([0DEB_CRE_LC]) as [0DEB_CRE_LC],
+		     sum([0CREDIT_LC]) as [0CREDIT_LC],
+			 sum([0DEBIT_LC]) as [0DEBIT_LC]
+		FROM
+			[$(vDataTier2)\FactTables\Дашборд ВОК\SAP\ZGRCCP410\ZGRCCP410_ИсходныеДанные.qvd]
+			(qvd)
+		Where 
+			Year(Период)<2025
+		Group By 
+			 [ДО Наименование], 
+			 [0COMP_CODE], 
+		     [0GL_ACCOUNT], 
+		     Период;
+		
+		STORE ZGRCCP410_ИсходныеДанные into $(vDataTier3)\Дашборд ВОК\Лист_5 Резервы\Резервы_ZGRCCP410_ИсходныеДанные_AGGR.qvd;	
+		DROP Table ZGRCCP410_ИсходныеДанные;
+		
+	ENDIF
+	     
+ENDSUB
+///$tab Резервы
+//ОБЪЕДИНЕНИЕ ВСЕХ РЕЗЕРВОВ
+SUB Резервы
+	
+	//РЕЗЕРВ ДЗ - из АРМ КК, единица измерения в рублях
+	Резервы:
+	LOAD 
+		 'Резерв по СД' 											as [Вид резерва],
+		 [ДО Наименование],
+	     Дата  														as [Резервы Период], 
+	     [Контрагент Наименование]									as [Контрагент Наименование Резервы], 		     
+	     if(isnull([Резерв восстановление за счет списания (без отрицательных сальдо), руб.]), 0,  
+	     	 [Резерв восстановление за счет списания (без отрицательных сальдо), руб.])*(-1)
+		 	+[Резерв восстановление за счет погашения (без отрицательных сальдо), руб.]*(-1)
+		 +
+		 if(isNull([Резерв начисление (без отрицательных сальдо), руб.]), 0,  
+		 	[Резерв начисление (без отрицательных сальдо), руб.])
+		 															as [Сумма резерва],
+		[Резерв на конец периода (без отрицательных сальдо), руб.]/1000000  as [Резерв Сальдо]
+	FROM
+		[$(vDataTier2)\FactTables\Дашборд ВОК\SAP\АРМ БК\Резерв Данные Резерв ДЗ.qvd]
+		(qvd)
+		Where Exists(Поле2, [ДО Наименование]);
+	
+	STORE Резервы into $(vDataTier3)\Дашборд ВОК\Лист_5 Резервы\Резервы.qvd;
+	
+	
+	[Статья-Счет-Секция]:
+	LOAD Distinct
+	//	if(Right(PERIOD,2)>12, 
+	//			date(DayStart(MonthEnd(MakeDate(left(PERIOD,4),12)))),
+	//			date(DayStart(MonthEnd(MakeDate(left(PERIOD,4),Right(PERIOD,2)))))) as Период,
+		 PERIOD, 
+	     [0COMP_CODE], 
+	     [0GL_ACCOUNT], 
+	     ParentERGSL, 
+	     _%0GL_ACCOUNT,	
+	     [0COMP_CODE]&'_'&[0GL_ACCOUNT] as KEY_410	 
+	FROM
+		[$(vDataTier2)\Балансовая комиссия\References\Статья-Счет-Секция.qvd]
+		(qvd)
+	Where 
+		WildMatch(ParentERGSL, '121*', '1430', '1540')
+		;
+	
+	
+	Left Join ([Статья-Счет-Секция])
+	LOAD Distinct
+		 _%0GL_ACCOUNT, 
+		 [Наименование счета] as [Наименование счета Исходное],
+		 if([Наименование счета] like '*ARO*', 'ARO',
+	     ApplyMap('Оценочные резервы мэппинг',[Наименование счета], 'не найдено_'&[Наименование счета])) as   [Наименование счета]
+	FROM
+		[$(vDataTier2)\Балансовая комиссия\References\Счета.qvd]
+		(qvd);
+	
+	DROP Field _%0GL_ACCOUNT;	
+	
+	//сгруппированные 1 раз данные до 2025 года
+	ZGRCCP410_ИсходныеДанные:
+	LOAD 
+		 [ДО Наименование], 
+	     [0COMP_CODE], 
+	     [0GL_ACCOUNT], 
+	     Период, 
+	     [0DEB_CRE_LC],
+	     [0CREDIT_LC],
+		 [0DEBIT_LC],
+	     [0COMP_CODE]&'_'&[0GL_ACCOUNT] as KEY_410
+	FROM
+		[$(vDataTier3)\Дашборд ВОК\Лист_5 Резервы\Резервы_ZGRCCP410_ИсходныеДанные_AGGR.qvd]
+		(qvd)
+	Where Exists(KEY_410, [0COMP_CODE]&'_'&[0GL_ACCOUNT])
+	;
+	
+	Concatenate (ZGRCCP410_ИсходныеДанные)
+	LOAD 
+	     [ДО Наименование], 
+	     [0COMP_CODE], 
+	     [0GL_ACCOUNT], 
+	     Период, 
+	     [0DEB_CRE_LC],
+	     [0CREDIT_LC],
+		 [0DEBIT_LC],
+	     [0COMP_CODE]&'_'&[0GL_ACCOUNT] as KEY_410
+	FROM
+		[$(vDataTier2)\FactTables\Дашборд ВОК\SAP\ZGRCCP410\ZGRCCP410_ИсходныеДанные.qvd]
+		(qvd)
+	Where Year(Период)>=2025
+	and Exists(KEY_410, [0COMP_CODE]&'_'&[0GL_ACCOUNT])
+	;
+	
+	
+	//Сборка календаря для накопления
+	t1:
+	LOAD Distinct Период Resident ZGRCCP410_ИсходныеДанные;
+	Join LOAD Период as Период1 Resident t1;
+	
+	Календарь_Накопление:
+	LOAD
+		Период,
+		Период1 as Период_Накопительно
+	Resident t1
+	Where 
+		Период1>=Период and Year(Период1)>=(Year(Today())-1);
+	
+	DROP Table t1;
+	
+	STORE ZGRCCP410_ИсходныеДанные 	into $(vDataTier3)\Дашборд ВОК\Лист_5 Резервы\Резервы_ZGRCCP410_ИсходныеДанные.qvd;
+	STORE Календарь_Накопление 		into $(vDataTier3)\Дашборд ВОК\Лист_5 Резервы\Резервы_Календарь_Накопление.qvd;
+	STORE [Статья-Счет-Секция] 		into $(vDataTier3)\Дашборд ВОК\Лист_5 Резервы\Резервы_Статья_Счет_Секция.qvd;
+	
+	DROP Table
+		ZGRCCP410_ИсходныеДанные,
+		Календарь_Накопление,
+		[Статья-Счет-Секция];
+
+ENDSUB
+
+///$tab CALLs
+CALL MapTBLs
+CALL ServiceTBLs
+CALL SAP410_Группировка
+CALL Резервы
